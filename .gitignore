@@ -180,3 +180,6 @@ cython_debug/
 .pypircmodels/tinyllama-1.1b-chat-v1.0-q4_k_m.gguf
 
 models/tinyllama-1.1b-chat-v1.0-q4_k_m.gguf
+
+/home/harshagale/Documents/Projects/Qiro_chat/RAG_Chatbot/components/fine_tune_embed/fine_tuned_model
+
