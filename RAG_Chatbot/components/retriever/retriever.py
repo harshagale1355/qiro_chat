@@ -1,61 +1,203 @@
+from typing import List
+
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+
+from sentence_transformers import SentenceTransformer
+from fastembed import SparseTextEmbedding
+
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+
+from pydantic import PrivateAttr
+
 from RAG_Chatbot.logging.logger import logging
-from RAG_Chatbot.exception.exception import RAG_Chatbot_Exception
-from langchain_text_splitters import RecursiveCharacterTextSplitter 
-from langchain_classic.chains import RetrievalQA
-from RAG_Chatbot.components.vector_store.vector import VectorStore
-import sys
-from RAG_Chatbot.components.LLM.LLM import LLMs
-from langchain_classic.prompts import PromptTemplate
 
-class QAchain:
-    def retriever(self, strict_mode=True):
-        try:
-            vector_store = VectorStore()
-            vector_doc = vector_store.vector()
-            
-            LLMS_instance = LLMs()
-            LLMs_model = LLMS_instance.llms_model()
-            
-            
-            qa_prompt_template = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-                You are the Qiro Verse AI Agent. 
 
-                STRICT OPERATING RULES:
-                1. ONLY use the provided context to answer.
-                2. If the answer is not in the context, you MUST say: "This information is not available in the provided documents."
-                3. DO NOT introduce yourself. DO NOT say "I am an AI."
-                4. DO NOT offer general help. 
-                5. Response must be under 3 sentences.
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
 
-                CONTEXT:
-                {context}<|eot_id|><|start_header_id|>user<|end_header_id|>
-                QUESTION: {question}
-                <|eot_id|><|start_header_id|>assistant<|end_header_id|>"""
-            
-            qa_prompt = PromptTemplate(
-                template=qa_prompt_template,
-                input_variables=["context", "question"]
-            )
-            
-            # Groq is fast, so we can afford slightly higher 'k' 
-            # for better context, provided the model's window allows it.
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=LLMs_model,
-                chain_type="stuff",
-                retriever=vector_doc.as_retriever(
-                    search_kwargs={
-                        "k": 5, 
-                    }
+COLLECTION_NAME = "medical_rag_collection"
+
+QDRANT_PATH = "./qdrant_storage"
+
+MODEL_PATH = "RAG_Chatbot/components/fine_tune_embed/fine_tuned_model"
+
+SPARSE_MODEL_NAME = "Qdrant/bm25"
+
+
+# -----------------------------------------------------------------------------
+# Retriever
+# -----------------------------------------------------------------------------
+
+class QdrantRetriever(BaseRetriever):
+
+    limit: int = 1
+
+    # Private attributes
+    _client: QdrantClient = PrivateAttr()
+
+    _model: SentenceTransformer = PrivateAttr()
+
+    _sparse_model: SparseTextEmbedding = PrivateAttr()
+
+    # -------------------------------------------------------------------------
+    # Init
+    # -------------------------------------------------------------------------
+
+    def __init__(self, **kwargs):
+
+        super().__init__(**kwargs)
+
+        logging.info("Loading embedding model...")
+
+        self._model = SentenceTransformer(
+            MODEL_PATH
+        )
+
+        logging.info("Loading sparse model...")
+
+        self._sparse_model = SparseTextEmbedding(
+            model_name=SPARSE_MODEL_NAME
+        )
+
+        logging.info("Connecting to Qdrant...")
+
+        self._client = QdrantClient(
+            path=QDRANT_PATH
+        )
+
+    # -------------------------------------------------------------------------
+    # Required LangChain Method
+    # -------------------------------------------------------------------------
+
+    def _get_relevant_documents(
+        self,
+        query: str
+    ) -> List[Document]:
+
+        logging.info(f"Searching: {query}")
+
+        # -------------------------------------------------------------------------
+        # Dense Embedding
+        # -------------------------------------------------------------------------
+
+        dense_query = self._model.encode(
+            query,
+            normalize_embeddings=True
+        ).tolist()
+
+        # -------------------------------------------------------------------------
+        # Sparse Embedding
+        # -------------------------------------------------------------------------
+
+        sparse_query = list(
+            self._sparse_model.embed([query])
+        )[0]
+
+        # -------------------------------------------------------------------------
+        # Hybrid Search
+        # -------------------------------------------------------------------------
+
+        results = self._client.query_points(
+
+            collection_name=COLLECTION_NAME,
+
+            prefetch=[
+
+                # Dense Search
+                models.Prefetch(
+                    query=dense_query,
+                    using="dense",
+
+                    # Fetch more candidates
+                    limit=1,
                 ),
-                return_source_documents=True,
-                chain_type_kwargs={
-                    "prompt": qa_prompt,
-                    "verbose": False
+
+                # Sparse Search
+                models.Prefetch(
+                    query=models.SparseVector(
+                        **sparse_query.as_object()
+                    ),
+
+                    using="sparse",
+
+                    # Fetch more candidates
+                    limit=1,
+                ),
+            ],
+
+            # Fusion
+            query=models.FusionQuery(
+                fusion=models.Fusion.RRF
+            ),
+
+            # Final top-k
+            limit=self.limit,
+        )
+
+        documents = []
+
+        # -------------------------------------------------------------------------
+        # Convert to LangChain Documents
+        # -------------------------------------------------------------------------
+
+        for index, point in enumerate(results.points):
+
+            payload = point.payload or {}
+
+            doc = Document(
+
+                page_content=payload.get(
+                    "text",
+                    ""
+                ),
+
+                metadata={
+
+                    "source": payload.get(
+                        "source"
+                    ),
+
+                    "topic": payload.get(
+                        "topic"
+                    ),
+
+                    "page": payload.get(
+                        "page"
+                    ),
+
+                    "score": point.score,
                 }
             )
-            
-            logging.info("Groq-powered strict retriever configured")
-            return qa_chain
-            
-        except Exception as e:
-            raise RAG_Chatbot_Exception(e, sys)
+
+            documents.append(doc)
+
+            # ---------------------------------------------------------------------
+            # Debug Print
+            # ---------------------------------------------------------------------
+
+            print("\n" + "=" * 80)
+
+            print(f"RESULT {index + 1}")
+
+            print(f"Score: {point.score}")
+
+            print(f"Page: {payload.get('page')}")
+
+            print(doc.page_content[:1000])
+
+        logging.info(
+            f"Retrieved {len(documents)} documents"
+        )
+
+        return documents
+
+    # -------------------------------------------------------------------------
+    # Close
+    # -------------------------------------------------------------------------
+
+    def close(self):
+
+        self._client.close()

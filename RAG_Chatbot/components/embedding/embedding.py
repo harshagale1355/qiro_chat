@@ -11,6 +11,7 @@ class embedding:
                 model_name=MODEL_NAME,
                 model_kwargs=MODEL_KWARG
             )
+            logging.info("Embedding model loaded successfully")
             return embedded
         except Exception as e:
             raise RAG_Chatbot_Exception(e,sys)

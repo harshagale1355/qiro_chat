@@ -8,22 +8,26 @@ class Documentloader:
     """Loads all PDFs specified in FILES into a list of LangChain Documents."""
 
     def document_loader(self):
-        all_data = []
         try:
             if not FILES:
                 logging.warning("No files specified in FILES!")
-                return []
+                return
             
+             
+            # Open the file once before processing all PDFs
+
             for file in FILES:
                 if not os.path.exists(file):
                     logging.warning(f"{file} not found, skipping...")
                     continue
-                
+
                 loader = PyPDFLoader(file_path=file)
                 docs = loader.load()
-                all_data.extend(docs)
-                logging.info(f"{file} loaded successfully ({len(docs)} pages)")
-            
-            return all_data
+
+                logging.info(f"Loaded {len(docs)} pages from: {file}")
+
+                for doc in docs:
+                    yield doc
+
         except Exception as e:
             raise RAG_Chatbot_Exception(e, sys)

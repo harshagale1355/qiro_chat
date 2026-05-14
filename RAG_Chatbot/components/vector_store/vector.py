@@ -16,11 +16,14 @@ class VectorStore:
             embed_instance = embedding()  # instantiate the class
             embedding_doc = embed_instance.embedding_data()  # call the method properly
 
-            vector_store = Chroma.from_documents(
-                documents=splitter_data,
-                embedding=embedding_doc,
+            vector_store = Chroma(
+                embedding_function=embedding_doc,
                 persist_directory="./chroma_db"
             )
+            for chunk in splitter_data:
+                vector_store.add_documents([chunk])
+
+            vector_store.persist()
             logging.info("Vector is stored")
             return vector_store
         except Exception as e:

@@ -17,5 +17,8 @@ SEPARATORS=[
 ]
 
 FILES=[
-    "/home/harshagale/Documents/Projects/Qiro_chat/RAG_Chatbot/data/raw/data.pdf",
+    "/home/harshagale/Documents/Projects/Qiro_chat/RAG_Chatbot/data/raw/cardio.pdf",
+    "/home/harshagale/Documents/Projects/Qiro_chat/RAG_Chatbot/data/raw/diabetes.pdf",
+    "/home/harshagale/Documents/Projects/Qiro_chat/RAG_Chatbot/data/raw/hypertension.pdf",
+    "/home/harshagale/Documents/Projects/Qiro_chat/RAG_Chatbot/data/raw/tropical.pdf",
 ]
