@@ -32,228 +32,104 @@ VECTOR_SIZE = 384
 # Qdrant Store
 # -----------------------------------------------------------------------------
 
+import uuid
+import sys
+from typing import List, Dict, Any
+from langchain_core.runnables import RunnableLambda
+from langchain_core.documents import Document
+from langsmith import traceable
+
+
+
 class QdrantStore:
-
     def __init__(self):
-
-        logging.info("Loading embedding model...")
-
+        logging.info("Initializing QdrantStore...")
         self.model = SentenceTransformer(MODEL_PATH)
+        self.sparse_model = SparseTextEmbedding(model_name=SPARSE_MODEL_NAME)
+        self.splitter = Split()  # This now returns an LCEL generator
+        self.client = QdrantClient(path=QDRANT_PATH)
 
-        logging.info("Loading sparse model...")
-
-        self.sparse_model = SparseTextEmbedding(
-            model_name=SPARSE_MODEL_NAME
+    @traceable(run_type="embedding")
+    def _generate_embeddings(self, texts: List[str]):
+        """Traceable embedding generation for LangSmith."""
+        dense = self.model.encode(
+            texts, 
+            batch_size=BATCH_SIZE, 
+            convert_to_numpy=True, 
+            normalize_embeddings=True
         )
-
-        logging.info("Loading splitter...")
-
-        self.splitter = Split()
-
-        logging.info("Connecting to Qdrant...")
-
-        self.client = QdrantClient(
-            path=QDRANT_PATH
-        )
-
-    # -------------------------------------------------------------------------
-    # Create Collection
-    # -------------------------------------------------------------------------
+        sparse = list(self.sparse_model.embed(texts))
+        return dense, sparse
 
     def create_collection(self):
-
-        collections = self.client.get_collections().collections
-
-        collection_names = [
-            collection.name
-            for collection in collections
-        ]
-
-        if COLLECTION_NAME in collection_names:
-
-            logging.info(
-                f"Collection '{COLLECTION_NAME}' already exists."
-            )
-
-            return
-
-        logging.info(
-            f"Creating collection: {COLLECTION_NAME}"
-        )
-
-        self.client.create_collection(
-
-            collection_name=COLLECTION_NAME,
-
-            vectors_config={
-                "dense": models.VectorParams(
-                    size=VECTOR_SIZE,
-                    distance=models.Distance.COSINE,
-                )
-            },
-
-            sparse_vectors_config={
-                "sparse": models.SparseVectorParams(
-                    index=models.SparseIndexParams(
-                        on_disk=False,
-                    )
-                )
-            }
-        )
-
-    # -------------------------------------------------------------------------
-    # Existing Sources
-    # -------------------------------------------------------------------------
+        # ... (Keep your existing create_collection logic) ...
+        pass
 
     def get_existing_sources(self):
+        # ... (Keep your existing get_existing_sources logic) ...
+        pass
 
-        existing_sources = set()
+    def _ingest_documents(self, input_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """The core logic wrapped for LCEL."""
+        try:
+            reset = (input_data or {}).get("reset", False)
+            if reset:
+                self.client.delete_collection(COLLECTION_NAME)
+            
+            self.create_collection()
+            existing_sources = self.get_existing_sources()
 
-        scroll_result = self.client.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=100000,
-            with_payload=True,
-            with_vectors=False,
-        )
+            # Using the LCEL splitter from the previous step
+            all_chunks = list(self.splitter.split_data())
+            new_chunks = [c for c in all_chunks if c.metadata.get("source") not in existing_sources]
 
-        points = scroll_result[0]
+            if not new_chunks:
+                return {"status": "success", "chunks_stored": 0}
 
-        for point in points:
+            texts = [chunk.page_content for chunk in new_chunks]
+            
+            # Traceable embedding call
+            dense_embeddings, sparse_embeddings = self._generate_embeddings(texts)
 
-            payload = point.payload or {}
-
-            source = payload.get("source")
-
-            if source:
-                existing_sources.add(source)
-
-        return existing_sources
-
-    # -------------------------------------------------------------------------
-    # Store Documents
-    # -------------------------------------------------------------------------
-
-    def store(self, reset: bool = False):
-
-        if reset:
-
-            self.client.delete_collection(
-                COLLECTION_NAME
-            )
-
-        self.create_collection()
-
-        existing_sources = self.get_existing_sources()
-
-        all_chunks = list(
-            self.splitter.split_data()
-        )
-
-        new_chunks = [
-
-            chunk
-
-            for chunk in all_chunks
-
-            if chunk.metadata.get("source")
-            not in existing_sources
-        ]
-
-        if not new_chunks:
-
-            logging.info(
-                "No new documents found."
-            )
-
-            return
-
-        texts = [
-            chunk.page_content
-            for chunk in new_chunks
-        ]
-
-        # Dense Embeddings
-        dense_embeddings = self.model.encode(
-            texts,
-            batch_size=BATCH_SIZE,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )
-
-        # Sparse Embeddings
-        sparse_embeddings = list(
-            self.sparse_model.embed(texts)
-        )
-
-        points = []
-
-        for chunk, dense_vec, sparse_vec in zip(
-            new_chunks,
-            dense_embeddings,
-            sparse_embeddings
-        ):
-
-            points.append(
-
-                PointStruct(
-
-                    id=str(uuid.uuid4()),
-
-                    vector={
-
-                        "dense": dense_vec.tolist(),
-
-                        "sparse": sparse_vec.as_object()
-                    },
-
-                    payload={
-
-                        "text": chunk.page_content,
-
-                        "source": chunk.metadata.get(
-                            "source",
-                            "unknown"
-                        ),
-
-                        "topic": chunk.metadata.get(
-                            "topic",
-                            "General"
-                        ),
-
-                        "page": chunk.metadata.get(
-                            "page",
-                            -1
-                        ),
-                    }
+            points = []
+            for chunk, dense_vec, sparse_vec in zip(new_chunks, dense_embeddings, sparse_embeddings):
+                points.append(
+                    PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector={"dense": dense_vec.tolist(), "sparse": sparse_vec.as_object()},
+                        payload={
+                            "text": chunk.page_content,
+                            **chunk.metadata # Efficiently unpack metadata
+                        }
+                    )
                 )
-            )
 
-        self.client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=points
-        )
+            self.client.upsert(collection_name=COLLECTION_NAME, points=points)
+            logging.info(f"Stored {len(points)} chunks in Qdrant.")
+            
+            return {"status": "success", "chunks_stored": len(points)}
 
-        logging.info(
-            f"Stored {len(points)} chunks in Qdrant."
-        )
+        except Exception as e:
+            from RAG_Chatbot.exception.exception import RAG_Chatbot_Exception
+            raise RAG_Chatbot_Exception(e, sys)
 
-    # -------------------------------------------------------------------------
-    # Close
-    # -------------------------------------------------------------------------
-
-    def close(self):
-
-        self.client.close()
-
+    def as_runnable(self):
+        """Expose the store logic as an LCEL Runnable."""
+        return RunnableLambda(self._ingest_documents)
 
 # -----------------------------------------------------------------------------
-# Main
+# Main Implementation with LCEL
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-
-    store = QdrantStore()
-
-    store.store(reset=True)
-
-    store.close()
+    store_component = QdrantStore()
+    
+    # Define the Ingestion Chain
+    # In a full LCEL flow, you could pipe your loader | splitter | store
+    ingestion_chain = store_component.as_runnable()
+    
+    # Run the chain
+    result = ingestion_chain.invoke({"reset": True})
+    print(f"Ingestion Result: {result}")
+    
+    store_component.close()

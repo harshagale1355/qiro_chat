@@ -1,10 +1,30 @@
-from RAG_Chatbot.components.split.split import Split
-from RAG_Chatbot.logging.logger import logging
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from RAG_Chatbot.components.retriever.retriever import QdrantRetriever
+from RAG_Chatbot.components.LLM.LLM import LLMManager
 
-split = Split()
+# 1. Initialize our components
+retriever = QdrantRetriever(limit=3)
+llm = LLMManager().get_model()
 
-all_chunks = []
-for chunk in split.split_data():      # ← this triggers the whole chain
-    all_chunks.append(chunk)
+# 2. Create the prompt
+template = """Answer the question based only on the following medical context:
+{context}
 
-logging.info(f"Pipeline complete: {len(all_chunks)} total chunks")
+Question: {question}
+"""
+prompt = ChatPromptTemplate.from_template(template)
+
+# 3. THE LCEL CHAIN
+# This structure is what LangSmith "reads" to create the visual trace.
+rag_chain = (
+    {"context": retriever, "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+# 4. Usage
+# Every step (retrieval, prompt formatting, LLM call) is now traced in LangSmith!
+response = rag_chain.invoke("What is diabetes?")

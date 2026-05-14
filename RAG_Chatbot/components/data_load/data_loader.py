@@ -1,33 +1,44 @@
+import os
+import sys
+from typing import Iterator
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.runnables import RunnableLambda
+from langchain_core.documents import Document
+
 from RAG_Chatbot.exception.exception import RAG_Chatbot_Exception
 from RAG_Chatbot.logging.logger import logging
 from RAG_Chatbot.constant.constant_pipeline.__init import FILES
-import os, sys
 
 class Documentloader:
-    """Loads all PDFs specified in FILES into a list of LangChain Documents."""
+    """Loads PDFs using LCEL compatible logic for better LangSmith tracing."""
 
-    def document_loader(self):
+    def __init__(self):
+        self.files = FILES
+
+    def _process_files(self, config: dict = None) -> Iterator[Document]:
+        """The core logic wrapped for LCEL."""
         try:
-            if not FILES:
+            if not self.files:
                 logging.warning("No files specified in FILES!")
                 return
-            
-             
-            # Open the file once before processing all PDFs
 
-            for file in FILES:
-                if not os.path.exists(file):
-                    logging.warning(f"{file} not found, skipping...")
+            for file_path in self.files:
+                if not os.path.exists(file_path):
+                    logging.warning(f"{file_path} not found, skipping...")
                     continue
 
-                loader = PyPDFLoader(file_path=file)
+                # LangSmith will now track this specific loader activity
+                loader = PyPDFLoader(file_path=file_path)
                 docs = loader.load()
 
-                logging.info(f"Loaded {len(docs)} pages from: {file}")
-
+                logging.info(f"Loaded {len(docs)} pages from: {file_path}")
+                
                 for doc in docs:
                     yield doc
 
         except Exception as e:
             raise RAG_Chatbot_Exception(e, sys)
+
+    def get_loader_chain(self):
+        return RunnableLambda(self._process_files)
+
