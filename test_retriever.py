@@ -28,7 +28,7 @@ llm = LLMs().llms_model()
 qa_prompt_template = """
 <|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
-You are the Qiro Verse AI Agent.
+You are the InsightMed AI Agent.
 
 STRICT RULES:
 1. Answer ONLY from the provided context. If the context partially contains the answer, use the available information to answer briefly.

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import './index.css';
 
-const API_URL = "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -78,11 +78,11 @@ function App() {
       if (data.history && data.history.length > 0) {
         setMessages(data.history);
       } else {
-        setMessages([{ role: 'assistant', content: 'Welcome to Qiro Verse! How can I assist you today?' }]);
+        setMessages([{ role: 'assistant', content: 'Welcome to InsightMed! How can I assist you today?' }]);
       }
     } catch (e) {
       console.error("Error fetching history", e);
-      setMessages([{ role: 'assistant', content: 'Welcome to Qiro Verse! How can I assist you today?' }]);
+      setMessages([{ role: 'assistant', content: 'Welcome to InsightMed! How can I assist you today?' }]);
     }
   };
 
@@ -128,7 +128,7 @@ function App() {
       <div className="orb orb-2"></div>
       <div className="app-container">
         <header className="chat-header">
-          <div className="chat-title">Qiro Verse</div>
+          <div className="chat-title">InsightMed</div>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Online</div>
         </header>
 
@@ -143,7 +143,7 @@ function App() {
               )}
             </div>
           ))}
-          {isTyping && <div className="typing-indicator">Qiro is thinking...</div>}
+          {isTyping && <div className="typing-indicator">InsightMed is thinking...</div>}
         </main>
 
         <div className="chat-input-container">

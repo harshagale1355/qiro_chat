@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "🚀 Starting Qiro Verse Chatbot System..."
+echo "🚀 Starting InsightMed Chatbot System..."
 
 # Run Backend in conda environment
 echo "🟢 Starting FastAPI Backend..."
